@@ -14,6 +14,17 @@ type Parser struct {
 	errors    []string
 	curToken  token.Token
 	peekToken token.Token
+
+	prefixParseFns map[token.TokenType]prefixParseFn
+	infixParseFns  map[token.TokenType]infixParseFn
+}
+
+func (p *Parser) registerPrefix(tokenType token.TokenType, fn prefixParseFn) {
+	p.prefixParseFns[tokenType] = fn
+}
+
+func (p *Parser) registerInfix(tokenType token.TokenType, fn infixParseFn) {
+	p.infixParseFns[tokenType] = fn
 }
 
 func New(l *lexer.Lexer) *Parser {
@@ -21,6 +32,9 @@ func New(l *lexer.Lexer) *Parser {
 		l:      l,
 		errors: []string{},
 	}
+
+	p.prefixParseFns = make(map[token.TokenType]prefixParseFn)
+	p.registerPrefix(token.IDENT, p.parseIdentifier)
 
 	p.nextToken()
 	p.nextToken()
@@ -62,29 +76,11 @@ func (p *Parser) parseStatemnt() ast.Statement {
 	switch p.curToken.Type {
 	case token.LET:
 		return p.parseLetStatemnt()
+	case token.RETURN:
+		return p.parseReturnStatement()
 	default:
-		return nil
+		return p.parseExpressionStatement()
 	}
-}
-
-func (p *Parser) parseLetStatemnt() *ast.LetStatement {
-	stmt := &ast.LetStatement{Token: p.curToken}
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
-
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-
-	if !p.expectPeek(token.ASSIGN) {
-		return nil
-	}
-
-	// TODO: セミコロンに遭遇するまで式を読み飛ばしてしまっている
-	for !p.curTokenIs(token.ASSIGN) {
-		p.nextToken()
-	}
-
-	return stmt
 }
 
 func (p *Parser) curTokenIs(t token.TokenType) bool {
@@ -104,3 +100,78 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 		return false
 	}
 }
+
+func (p *Parser) parseLetStatemnt() *ast.LetStatement {
+	stmt := &ast.LetStatement{Token: p.curToken}
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if !p.expectPeek(token.ASSIGN) {
+		return nil
+	}
+
+	// TODO: セミコロンに遭遇するまで式を読み飛ばしてしまっている
+	for !p.curTokenIs(token.SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
+	stmt := &ast.ReturnStatement{Token: p.curToken}
+
+	p.nextToken()
+
+	// TODO: セミコロンに遭遇するまで式を読み飛ばしてしまっている
+	for !p.curTokenIs(token.SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
+	stmt := &ast.ExpressionStatement{Token: p.curToken}
+	stmt.Expression = p.parseExpression(LOWEST)
+
+	if p.peekTokenIs(token.SEMICOLON) {
+		p.nextToken()
+	}
+	return stmt
+}
+
+func (p *Parser) parseExpression(precedence int) ast.Expression {
+	prefix := p.prefixParseFns[p.curToken.Type]
+	if prefix == nil {
+		return nil
+	}
+	leftExp := prefix()
+
+	return leftExp
+}
+
+func (p *Parser) parseIdentifier() ast.Expression {
+	return &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+// 前置構文解析関数
+// 後置構文解析関数
+type (
+	prefixParseFn func() ast.Expression
+	infixParseFn  func(ast.Expression) ast.Expression
+)
+
+const (
+	_ int = iota
+	LOWEST
+	EQUALS      // ==
+	LESSGREATER // > or <
+	SUM         // +
+	PRODUCT     // *
+	PREFIX      // -X or !X
+	CALL        // myFunction(X)
+)
